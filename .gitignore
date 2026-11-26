@@ -1,0 +1,11 @@
+# Android / Gradle build output
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+# Generated at build time from index.html (see android/scripts/prepare_game.py)
+android/app/src/main/assets/
+# Signing material must never be committed
+*.keystore
+*.jks
+LIVION.apk

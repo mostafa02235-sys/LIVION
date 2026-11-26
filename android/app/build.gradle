@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+def envInt = { String n, int d -> def v = System.getenv(n); return (v != null && v.isInteger()) ? v.toInteger() : d }
+
+android {
+    namespace 'com.livion.game'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.livion.game'
+        minSdk 24
+        targetSdk 34
+        versionCode envInt('LIVION_VERSION_CODE', 1)
+        versionName(System.getenv('LIVION_VERSION_NAME') ?: '1.0')
+    }
+
+    // Signing comes from environment variables that the GitHub Actions workflow fills from
+    // repository secrets. No key or password is stored in this repository.
+    def ks = System.getenv('LIVION_KEYSTORE')
+    signingConfigs {
+        livion {
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('LIVION_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('LIVION_KEY_ALIAS')
+                keyPassword System.getenv('LIVION_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig ks ? signingConfigs.livion : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}

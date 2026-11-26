@@ -1,0 +1,125 @@
+# Builds LIVION.apk (com.livion.game) from the game in index.html.
+# Runs on every push to main, on version tags (v*), and manually from the Actions tab.
+name: Build LIVION Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: livion-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LIVION_VERSION_CODE: ${{ github.run_number }}
+      LIVION_VERSION_NAME: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('1.0.{0}', github.run_number) }}
+    steps:
+      - name: Get the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform 34 and build tools
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Pack the game into the app (offline assets)
+        run: |
+          set -e
+          A=android/app/src/main/assets
+          mkdir -p "$A/fonts"
+          # The game is built on three.js r128: bundle that exact version so the app needs no internet.
+          curl -fsSL --retry 3 -o "$A/three.min.js" https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js \
+            || curl -fsSL --retry 3 -o "$A/three.min.js" https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js
+          test "$(wc -c < "$A/three.min.js")" -gt 400000 || { echo "::error::three.js download failed"; exit 1; }
+          grep -q '"128"' "$A/three.min.js" || echo "::warning::could not confirm three.js revision 128"
+          # Fonts used by the title logo (Anton) and HUD (Oswald).
+          curl -fsSL --retry 3 -o "$A/fonts/Anton-Regular.ttf" "https://raw.githubusercontent.com/google/fonts/main/ofl/anton/Anton-Regular.ttf" \
+            || echo "::warning::Anton font not downloaded; a fallback font will be used"
+          curl -fsSL --retry 3 -o "$A/fonts/Oswald.ttf" "https://raw.githubusercontent.com/google/fonts/main/ofl/oswald/Oswald%5Bwght%5D.ttf" \
+            || echo "::warning::Oswald font not downloaded; a fallback font will be used"
+          python3 android/scripts/prepare_game.py index.html "$A/index.html"
+          cp android/bridge/android.js "$A/android.js"
+          ls -la "$A" "$A/fonts"
+
+      - name: Prepare signing key
+        env:
+          KS_B64: ${{ secrets.LIVION_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.LIVION_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.LIVION_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.LIVION_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ] && [ -n "$KEY_ALIAS" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/livion.keystore"
+            {
+              echo "LIVION_KEYSTORE=$RUNNER_TEMP/livion.keystore"
+              echo "LIVION_KEYSTORE_PASSWORD=$KS_PASS"
+              echo "LIVION_KEY_ALIAS=$KEY_ALIAS"
+              echo "LIVION_KEY_PASSWORD=${KEY_PASS:-$KS_PASS}"
+            } >> "$GITHUB_ENV"
+            echo "SIGNING=release key from repository secrets" >> "$GITHUB_ENV"
+            echo "Signing with the LIVION release key from repository secrets."
+          else
+            echo "SIGNING=temporary key (repository signing secrets not set)" >> "$GITHUB_ENV"
+            echo "::warning::Signing secrets are not set, so this APK is signed with a temporary key. Add LIVION_KEYSTORE_BASE64, LIVION_KEYSTORE_PASSWORD, LIVION_KEY_ALIAS and LIVION_KEY_PASSWORD so updates install over each other."
+          fi
+
+      - name: Build the APK
+        run: gradle -p android assembleRelease --no-daemon --stacktrace
+
+      - name: Check the APK
+        run: |
+          set -e
+          cp android/app/build/outputs/apk/release/app-release.apk LIVION.apk
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          "$BT/apksigner" verify --print-certs LIVION.apk
+          "$BT/aapt2" dump badging LIVION.apk | grep -E "^package:|application-label:|launchable-activity|sdkVersion"
+          unzip -l LIVION.apk | grep -E "assets/"
+          test "$(unzip -l LIVION.apk | grep -cE 'assets/(index.html|three.min.js|android.js)$')" -eq 3
+          # Make sure the packed game page needs nothing from the internet
+          unzip -p LIVION.apk assets/index.html > packed.html
+          ! grep -nE 'src="https?://|href="https?://' packed.html
+          ls -la LIVION.apk
+
+      - name: Upload LIVION.apk (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: LIVION-apk
+          path: LIVION.apk
+          if-no-files-found: error
+
+      - name: Publish direct download (latest build)
+        if: github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest-apk --yes --cleanup-tag || true
+          gh release create latest-apk LIVION.apk --prerelease --target "$GITHUB_SHA" \
+            --title "LIVION - latest APK (build ${{ github.run_number }})" \
+            --notes "Latest automatic build of LIVION ($LIVION_VERSION_NAME, signed with: $SIGNING). On your Android phone tap LIVION.apk below to download, then open it to install."
+
+      - name: Publish version release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" LIVION.apk --title "LIVION $GITHUB_REF_NAME" --generate-notes
