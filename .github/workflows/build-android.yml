@@ -24,19 +24,22 @@ jobs:
       LIVION_VERSION_NAME: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('1.0.{0}', github.run_number) }}
     steps:
       - name: Get the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up the Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android platform 34 and build tools
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+      - name: Install Android platform 34 and build tools (runner's preinstalled SDK)
+        run: |
+          set -e
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
 
       - name: Set up Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
