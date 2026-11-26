@@ -12,6 +12,19 @@ A PS2-era style open-world crime game built with **Three.js (r128)**. Play as Ad
 
 The app runs fully offline in landscape and full screen.
 
+## Graphics settings
+
+Pause menu → **GRAPHICS** cycles four presets (saved on the device):
+
+| Preset | What it changes |
+|---|---|
+| LOW | Retro 64 px textures, shorter view distance, no shadows, no street props or grass |
+| MEDIUM (phone default) | HD 256 px materials, street props, light grass/bushes, standard view distance |
+| HIGH (desktop default) | HD 512 px materials with anisotropic filtering, real-time shadows, full vegetation, colour grade + vignette |
+| VERY HIGH | Sharper resolution (up to 2× pixel ratio), larger shadow map and area, longest view distance, densest vegetation |
+
+![Before / after](docs/v12_before_after.png)
+
 ## Repository layout
 
 | Path | What it is |
