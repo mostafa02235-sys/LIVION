@@ -131,7 +131,18 @@ body.touch #clock{font-size:22px}body.touch #money{font-size:26px}body.touch #hp
 .row span{flex:1}.row em{font-style:normal;color:#3c9a3f;font-family:Anton,Impact,sans-serif;letter-spacing:1px}
 .row.wear{border-color:#e9c14a}
 </style>
-</head>
+<style>/* DRIVE 2 — touch driving layout: big pedals on the right, EXIT kept clear of GAS */
+#touch.car #joy{width:150px;height:150px;left:20px;bottom:20px}
+#touch.car #bGas{right:18px;bottom:22px;width:96px;height:96px;font-size:15px}
+#touch.car #bBrake{right:126px;bottom:16px;width:84px;height:84px;font-size:14px}
+#touch.car #bAct{right:36px;bottom:152px;width:58px;height:58px}
+#touch.car #bHorn{right:142px;bottom:122px;width:50px;height:50px}
+#touch.car #bRadio{right:104px;bottom:198px;width:48px;height:48px}
+#touch.car #bJob{right:170px;bottom:184px;width:50px;height:50px}
+#touch.car #bGas.on{background:rgba(60,200,90,.72);transform:scale(.94)}
+#touch.car #bBrake.on{background:rgba(230,50,50,.72);transform:scale(.94)}
+@media (max-height:380px){#touch.car #joy{width:128px;height:128px;bottom:14px}#touch.car #bGas{width:84px;height:84px;bottom:16px}#touch.car #bBrake{width:74px;height:74px;right:112px;bottom:12px}#touch.car #bAct{bottom:126px;width:52px;height:52px}#touch.car #bHorn{right:124px;bottom:102px;width:44px;height:44px}#touch.car #bRadio{right:102px;bottom:170px;width:42px;height:42px}#touch.car #bJob{right:146px;bottom:156px;width:44px;height:44px}}
+</style></head>
 <body>
 <canvas id="game"></canvas>
 <div id="vig"></div><div id="flash"></div>
@@ -1682,20 +1693,32 @@ class Car{
   smoke(dt){this.smokeT-=dt;if(this.smokeT>0)return;const hot=this.hp<20;this.smokeT=hot?.07:.18;const k=this.k,f=k.l/2-.9;const x=this.pos.x+Math.sin(this.h)*f,z=this.pos.z+Math.cos(this.h)*f;puff(x,this.pos.y+.42+k.h+.2,z,hot,false);if((this.fireT>0||this.hp<10)&&Math.random()<.6)puff(x,this.pos.y+.5+k.h,z,false,true)}
   drive(dt,inp){const k=this.k;if(this.dead)inp={thr:0,brk:.4,st:inp.st,hb:0};
     const sh=Math.sin(this.h),ch=Math.cos(this.h);let vF=this.vx*sh+this.vz*ch,vL=this.vx*ch-this.vz*sh;
+    const H=inp.pl?(this.hand||(this.hand=handOf(k))):null;
+    if(H){// player only: ramp pedals so key presses and button taps never jump the speed
+      this.thS=approach(this.thS||0,inp.thr,dt*(inp.thr>(this.thS||0)?3.4:7));this.bkS=approach(this.bkS||0,inp.brk,dt*(inp.brk>(this.bkS||0)?8:12));
+      if(inp.brk>0&&vF<.6)this.revT=(this.revT||0)+dt;else if(!(inp.brk>0))this.revT=0;
+      inp={thr:this.thS,brk:this.bkS,st:inp.st,hb:inp.hb,cap:inp.cap,pl:1,rev:(this.revT||0)>.35}}
     const sand=this.pos.z>SAND0&&this.pos.x<QUAY,wet=Weather.wet>.3;
     if(inp.thr>0){if(vF<-.5)vF+=26*inp.thr*dt;else vF+=k.acc*(1-Math.max(0,vF)/k.max*.8)*inp.thr*dt*(sand?.6:1)*(inp.cap&&vF>k.max*inp.cap?0:1)}
-    if(inp.brk>0){if(vF>.5)vF-=(wet?17:24)*inp.brk*dt;else vF-=k.acc*.6*inp.brk*dt}
+    if(inp.brk>0){if(vF>.5)vF-=(H?(wet?12:16.5)*H.bf:(wet?17:24))*inp.brk*dt;else if(!H||inp.rev)vF-=k.acc*.6*inp.brk*dt;else vF=Math.max(Math.min(vF,0),vF-24*inp.brk*dt)}
     if(!inp.thr&&!inp.brk)vF-=Math.sign(vF)*Math.min(Math.abs(vF),(1.2+Math.abs(vF)*.03+(sand?3:0))*dt);
     if(inp.hb)vF-=Math.sign(vF)*Math.min(Math.abs(vF),9*dt);
     vF-=9.8*Math.sin(-this.g.rotation.x)*dt*.75;vF=clamp(vF,-k.max*.35,sand?16:k.max);
-    const tgt=inp.st*(.6-.34*Math.min(1,Math.abs(vF)/k.max));this.steer=lerp(this.steer,tgt,Math.min(1,dt*7));
-    const wantYR=vF*Math.tan(this.steer)/(k.l*.62)*(inp.hb?1.55:1);this.yr=lerp(this.yr,wantYR,Math.min(1,dt*(inp.hb?4:9)));this.h-=this.yr*dt;
-    const grip=(inp.hb?1.6:k.grip)*(wet?.62:1)*(sand?.7:1);vL*=Math.exp(-grip*dt);this.slip=Math.abs(vL);
+    let wantYR;
+    if(H){// speed-sensitive lock, steering rate limited (time-to-full-lock, faster return to centre), lateral-grip yaw limit
+      const lock=H.lock*(1-.7*Math.min(1,Math.abs(vF)/(k.max*.85))),tgt=inp.st*lock,back=Math.abs(tgt)<Math.abs(this.steer)||tgt*this.steer<0;
+      this.steer=approach(this.steer,tgt,H.lock*(back?H.ret:H.sr)*dt);
+      wantYR=vF*Math.tan(this.steer)/(k.l*.62);if(!inp.hb){const mx=H.lat*(wet?.75:1)*(sand?.8:1)/Math.max(4,Math.abs(vF));wantYR=clamp(wantYR,-mx,mx)}else wantYR*=1.55;
+      this.yr=lerp(this.yr,wantYR,Math.min(1,dt*(inp.hb?4:7)))}
+    else{const tgt=inp.st*(.6-.34*Math.min(1,Math.abs(vF)/k.max));this.steer=lerp(this.steer,tgt,Math.min(1,dt*7));
+      wantYR=vF*Math.tan(this.steer)/(k.l*.62)*(inp.hb?1.55:1);this.yr=lerp(this.yr,wantYR,Math.min(1,dt*(inp.hb?4:9)))}
+    this.h-=this.yr*dt;
+    const grip=(inp.hb?1.6:k.grip*(H&&Math.abs(vF)<8?1.5:1))*(wet?.62:1)*(sand?.7:1);vL*=Math.exp(-grip*dt);this.slip=Math.abs(vL);
     const nh=Math.sin(this.h),nc=Math.cos(this.h);this.vx=nh*vF+nc*vL;this.vz=nc*vF-nh*vL;this.speed=vF;this.brk=inp.brk>0&&vF>.3||!!inp.hb;
     const ox=this.pos.x,oz=this.pos.z;this.pos.x+=this.vx*dt;this.pos.z+=this.vz*dt;
     let mx=0,mz=0,hx=0,hz=0;for(const c of this.circles()){const p={x:c.x,z:c.z};if(collide(p,c.r,this.pos.y+.5)){const dx=p.x-c.x,dz=p.z-c.z;if(Math.abs(dx)>Math.abs(mx))mx=dx;if(Math.abs(dz)>Math.abs(mz))mz=dz;hx=c.x;hz=c.z}}
-    const m=Math.hypot(mx,mz);if(m>.001){this.pos.x+=mx;this.pos.z+=mz;const nx=mx/m,nz=mz/m,vn=this.vx*nx+this.vz*nz;if(vn<0){this.vx-=1.3*vn*nx;this.vz-=1.3*vn*nz;
-        if(vn<-4){const imp=-vn;this.damage((imp-4)*3.2,hx-nx*this.k.w/2,hz-nz*this.k.w/2);if(this===player.car){shake=Math.min(.6,imp*.04);Sound.crash(Math.min(1,imp/20))}worldEvent(this.pos.x,this.pos.z,12,'crash')}}
+    const m=Math.hypot(mx,mz);if(m>.001){this.pos.x+=mx;this.pos.z+=mz;const nx=mx/m,nz=mz/m,vn=this.vx*nx+this.vz*nz;if(vn<0){const e=H?1.15:1.3;this.vx-=e*vn*nx;this.vz-=e*vn*nz;this.yr*=.4;
+        if(vn<-4){const imp=-vn;this.damage((imp-4)*3.2,hx-nx*this.k.w/2,hz-nz*this.k.w/2);if(this===player.car){shake=Math.min(.35,imp*.025);Sound.crash(Math.min(1,imp/20))}worldEvent(this.pos.x,this.pos.z,12,'crash')}}
       this.speed=this.vx*Math.sin(this.h)+this.vz*Math.cos(this.h)}
     const yh=this.pos.y+1.2;let ng=groundY(this.pos.x,this.pos.z,yh);if((ng<-.55&&!(ng>-.69&&TER.roadD(this.pos.x,this.pos.z)<6))||ng>this.pos.y+1.25){this.pos.x=ox;this.pos.z=oz;this.vx*=-.2;this.vz*=-.2;ng=groundY(ox,oz,yh)}
     this.pos.y=lerp(this.pos.y,ng,Math.min(1,dt*12));this.g.rotation.y=this.h;
@@ -1705,6 +1728,9 @@ class Car{
     this.spin+=vF*dt/.37;for(const w of this.wheels)w.rotation.x=this.spin;for(const f of this.front)f.rotation.y=-this.steer;
     this.tm.color.setHex(this.brk?0xff2a2a:night>.3||Weather.rain>.3?0xb01818:0x661010);if(this.fireT>0)this.fireT-=dt;if(this.hp<45)this.smoke(dt)}
 }
+const HANDLING={moto:[.6,3.4,1.1,1.05],sport:[.52,3,1,1.15],muscle:[.5,2.6,1,1],lux:[.5,2.7,1,1.1],sedan:[.52,2.7,1,1],taxi:[.52,2.7,1,1],compact:[.56,3,1,1.02],suv:[.48,2.3,.92,.9],pickup:[.48,2.3,.92,.9],van:[.46,2.1,.88,.85],box:[.42,1.8,.8,.8],bus:[.42,1.6,.78,.75]};
+function handOf(k){let kind='sedan';for(const n in KIND)if(KIND[n]===k){kind=n;break}const T=HANDLING[kind]||HANDLING.sedan;return{lock:T[0],sr:T[1],ret:T[1]*1.7,bf:T[2],lat:k.grip*1.15*T[3]}}
+function approach(a,b,d){return a<b?Math.min(b,a+d):Math.max(b,a-d)}
 function setVel(c,v){c.vx=Math.sin(c.h)*v;c.vz=Math.cos(c.h)*v;c.speed=v}
 function carCollisions(){for(let i=0;i<cars.length;i++)for(let j=i+1;j<cars.length;j++){const a=cars[i],b=cars[j];if(Math.abs(a.pos.x-b.pos.x)>12||Math.abs(a.pos.z-b.pos.z)>12)continue;
   for(const ca of a.circles())for(const cb of b.circles()){const dx=cb.x-ca.x,dz=cb.z-ca.z,d=Math.hypot(dx,dz),r=ca.r+cb.r;if(d<r&&d>.001){const nx=dx/d,nz=dz/d,ma=a.k.m,mb=b.k.m,o=r-d;
@@ -1848,7 +1874,7 @@ const flags={house:false,saved:false,bought:false};
 function rebuildAdam(){const p=adam.root.position.clone(),r=adam.root.rotation.y,v=adam.root.visible;scene.remove(adam.root);adam=human(adamOpts(player.outfit));adam.root.position.copy(p);adam.root.rotation.y=r;adam.root.visible=v;scene.add(adam.root);player.pos=adam.root.position;if(typeof faceRig==='function')faceRig(adam,0xd9a581)}
 const START={x:4.5,z:HZ+7.6,face:Math.PI};
 const keys={},edge={},btn={};let joy={x:0,y:0,on:false};
-let camYaw=0,camPitch=.28,camDist=5.5,curD=5.5,lastCamInput=-9,shake=0,lastStep=0;
+let camYaw=0,camPitch=.28,camDist=5.5,curD=5.5,lastCamInput=-9,shake=0,lastStep=0,camTy=null,camLa=0;
 function getMove(){let x=0,y=0;if(keys.KeyW||keys.ArrowUp)y+=1;if(keys.KeyS||keys.ArrowDown)y-=1;if(keys.KeyA||keys.ArrowLeft)x-=1;if(keys.KeyD||keys.ArrowRight)x+=1;if(joy.on){x+=joy.x;y+=joy.y}const m=Math.hypot(x,y);if(m>1){x/=m;y/=m}return{x,y,m:Math.min(1,m)}}
 function surface(){if(inside)return inside==='garage'||inside==='mart'||inside==='dealer'?'hard':'wood';if(player.pos.z>SAND0&&player.pos.x<QUAY)return player.pos.y<WL+.05?'water':'sand';if(player.pos.x>QUAY)return'wood';return'hard'}
 function updateFoot(dt){if(Dir.on&&Dir.adamCtl){Dir.adamFoot(dt);return}const mv=locked()?{x:0,y:0,m:0}:getMove();const run=keys.ShiftLeft||keys.ShiftRight||player.runLock||(joy.on&&mv.m>.93);const sp=(run?(Needs.energy<12?6.2:8.6):4.3)*mv.m*(inside?.8:1)*(surface()==='water'?.6:1);
@@ -1867,9 +1893,13 @@ function updateFoot(dt){if(Dir.on&&Dir.adamCtl){Dir.adamFoot(dt);return}const mv
   const stp=Math.floor(adam.phase/Math.PI);if(stp!==lastStep&&player.ground&&spd>.6)Sound.step(surface());lastStep=stp}
 function nearCar(){if(inside)return null;let best=null,bd=1e9;for(const c of cars){if(Math.abs(c.speed)>8||Math.abs(c.pos.x-player.pos.x)>8||Math.abs(c.pos.z-player.pos.z)>8)continue;for(const ci of c.circles()){const d=Math.hypot(ci.x-player.pos.x,ci.z-player.pos.z)-ci.r;if(d<bd){bd=d;best=c}}}return bd<1.8?best:null}
 function nearPed(){let best=null,bd=2;for(const p of peds){if(p.job||!['walk','jog','chat','sit'].includes(p.state)||!p.h.root.visible)continue;const d=p.h.root.position.distanceTo(player.pos);if(d<bd){bd=d;best=p}}return best}
-function exitCar(force){const c=player.car;if(!c)return;if(!force&&Math.abs(c.speed)>7){flashPrompt('Slow down to get out');return}const lx=Math.cos(c.h),lz=-Math.sin(c.h);let ok=false;
-  for(const s of[1,-1]){const x=c.pos.x+lx*s*(c.k.w/2+.8),z=c.pos.z+lz*s*(c.k.w/2+.8);if(!solidAt(x,1,z)&&groundY(x,z)>-1.2){player.pos.set(x,groundY(x,z),z);ok=true;break}}
-  if(!ok)player.pos.set(c.pos.x,c.pos.y+1.6,c.pos.z);if(force)setVel(c,0);player.face=c.h;player.car=null;adam.root.visible=true;adam.root.rotation.z=0;player.vx=player.vz=player.vy=0;Sound.horn(false);setTouchMode();if(c.owned)saveSoon=1}
+function exitCar(force){const c=player.car;if(!c)return;if(!force&&Math.abs(c.speed)>7){flashPrompt('Slow down to get out');return}const lx=Math.cos(c.h),lz=-Math.sin(c.h),fx=Math.sin(c.h),fz=Math.cos(c.h);let ok=false;
+  const spots=[[lx,lz,c.k.w/2+.8],[-lx,-lz,c.k.w/2+.8],[lx,lz,c.k.w/2+1.6],[-lx,-lz,c.k.w/2+1.6],[-fx,-fz,c.k.l/2+.9],[fx,fz,c.k.l/2+.9]];
+  for(const [ux,uz,dd] of spots){const x=c.pos.x+ux*dd,z=c.pos.z+uz*dd,gy=groundY(x,z,c.pos.y+1.5);
+    if(gy<-.5||Math.abs(gy-c.pos.y)>1.6||solidAt(x,gy+1,z)||solidAt(x,gy+.4,z))continue;
+    if(cars.some(o=>o!==c&&Math.abs(o.pos.x-x)<6&&Math.abs(o.pos.z-z)<6&&o.circles().some(q=>Math.hypot(q.x-x,q.z-z)<q.r+.45)))continue;
+    player.pos.set(x,gy,z);ok=true;break}
+  if(!ok){if(!force){flashPrompt('No room to get out here');return}player.pos.set(c.pos.x,c.pos.y+1.6,c.pos.z)}if(force)setVel(c,0);player.face=c.h;player.car=null;adam.root.visible=true;adam.root.rotation.z=0;player.vx=player.vz=player.vy=0;Sound.horn(false);setTouchMode();if(c.owned)saveSoon=1}
 function enterCar(c){if(c.ai){c.ai=null;const lx=Math.cos(c.h),lz=-Math.sin(c.h);const p=grabPed();p.h.root.position.set(c.pos.x-lx*(c.k.w/2+1.2),c.pos.y,c.pos.z-lz*(c.k.w/2+1.2));p.state='flee';p.t=6;p.from={x:c.pos.x,z:c.pos.z};subtitle('<i>DRIVER:</i> Hey! That\'s my car!',2.2);setVel(c,c.speed*.2)}
   player.car=c;c.driven=true;adam.root.visible=!!c.k.moto;lastCamInput=-9;setTouchMode();if(c.kind==='taxi'&&!Job.type&&!Story.active)subtitle(isTouch?'Tap JOB to start the taxi job.':'Press J to start the taxi job.',3)}
 function interact(){if(player.dead||locked())return;
@@ -1877,7 +1907,9 @@ function interact(){if(player.dead||locked())return;
   const a=nearAct();if(a){a.fn();return}
   const c=nearCar();if(c){enterCar(c);return}
   const p=nearPed();if(p){releasePed(p);if(p.state==='sit'||p.state==='chat')p.state='walk';if(!p.loop)placeOnLoop(p,nearLoop());p.talk=3;subtitle('<i>ADAM:</i> Hey.',1);setTimeout(()=>{if(p.talk>0)subtitle('<i>STRANGER:</i> '+mpick(PEDLINES),2.4)},700)}}
-function updateDrive(dt){if(player.car.auto){player.pos.copy(player.car.pos);return}if(SM.hold>0){const c=player.car;c.drive(dt,{thr:c.speed<-.5?1:0,brk:c.speed>.5?1:0,st:0,hb:0});player.pos.copy(player.car.pos);return}const mv=locked()?{x:0,y:0}:getMove();const thr=locked()?0:Math.max(btn.gas?1:0,mv.y>.15?mv.y:0);const brk=locked()?1:Math.max(btn.brake?1:0,mv.y<-.15?-mv.y:0);player.car.drive(dt,{thr,brk,st:clamp(mv.x,-1,1),hb:keys.Space?1:0});player.pos.copy(player.car.pos);if(player.car.k.moto){const c=player.car;adam.root.visible=true;player.pos.y=c.pos.y+.02;adam.root.position.x-=Math.sin(c.h)*.25;adam.root.position.z-=Math.cos(c.h)*.25;adam.root.rotation.y=c.h;adam.root.rotation.z=-c.bodyG.rotation.z;animHuman(adam,0,dt,false,0,'ride')}
+function updateDrive(dt){if(player.car.auto){player.pos.copy(player.car.pos);return}if(SM.hold>0){const c=player.car;c.drive(dt,{thr:c.speed<-.5?1:0,brk:c.speed>.5?1:0,st:0,hb:0});player.pos.copy(player.car.pos);return}const mv=locked()?{x:0,y:0}:getMove();let sx=clamp(mv.x,-1,1);if(joy.on){const ax=Math.abs(sx);sx=ax<.08?0:Math.sign(sx)*Math.pow((ax-.08)/.92,1.35)}
+  const yOK=!joy.on||(!btn.gas&&!btn.brake&&Math.abs(mv.y)>.45&&Math.abs(mv.y)>Math.abs(mv.x)*.8);
+  const thr=locked()?0:Math.max(btn.gas?1:0,yOK&&mv.y>.15?mv.y:0);const brk=locked()?1:Math.max(btn.brake?1:0,yOK&&mv.y<-.15?-mv.y:0);player.car.drive(dt,{thr,brk,st:sx,hb:keys.Space?1:0,pl:1});player.pos.copy(player.car.pos);if(player.car.k.moto){const c=player.car;adam.root.visible=true;player.pos.y=c.pos.y+.02;adam.root.position.x-=Math.sin(c.h)*.25;adam.root.position.z-=Math.cos(c.h)*.25;adam.root.rotation.y=c.h;adam.root.rotation.z=-c.bodyG.rotation.z;animHuman(adam,0,dt,false,0,'ride')}
   const c=player.car;if(Math.abs(c.speed)>8&&Math.abs(groundY(c.pos.x,c.pos.z)-CURB)<.01&&c.pos.z<HZ+5)worldEvent(c.pos.x,c.pos.z,7,'danger')}
 function damage(d){if(player.dead)return;player.hp=Math.max(0,player.hp-d);$('flash').style.opacity=.35;setTimeout(()=>$('flash').style.opacity=0,120);if(player.hp<=0)wasted()}
 function addRespect(n){player.respect=clamp(player.respect+n,0,100)}
@@ -2168,12 +2200,18 @@ function updateCam(dt){let lx,ly,lz;{const tf=62+(player.car&&!Story.cine?clamp(
     const bi=clamp((now-c.t0)/.8,0,1),be=bi*bi*(3-2*bi);if(be<1){camPos.lerpVectors(c.camStart,camPos,be);lookNow.set(lx,ly,lz);lookNow.lerpVectors(c.lookStart,lookNow,be);lx=lookNow.x;ly=lookNow.y;lz=lookNow.z}
     camera.position.copy(camPos);camera.lookAt(lx,ly,lz);lookFrom.set(lx,ly,lz);camFrom.copy(camPos);blendOut=1;return}
   let tx,ty,tz,dist;const c=player.car;
-  if(c){tx=c.pos.x;ty=c.pos.y+(c.kind==='bus'?2.6:1.7);tz=c.pos.z;dist=(c.kind==='bus'?13:8)+Math.abs(c.speed)*.06;if(now-lastCamInput>1.3&&Math.abs(c.speed)>2){camYaw+=angDiff(camYaw,c.h)*Math.min(1,dt*2.4);camPitch=lerp(camPitch,.2,dt)}}
-  else{tx=player.pos.x;ty=player.pos.y+1.55;tz=player.pos.z;dist=inside?3.4:5.2}
+  if(c){const sp=Math.abs(c.speed);let la=clamp(c.speed*.16,-1.5,5);while(Math.abs(la)>.2&&solidAt(c.pos.x+Math.sin(c.h)*la,c.pos.y+1.6,c.pos.z+Math.cos(c.h)*la))la*=.5;
+    camLa=Math.abs(la)<Math.abs(camLa)||la*camLa<0?la:lerp(camLa,la,Math.min(1,dt*4));tx=c.pos.x+Math.sin(c.h)*camLa;tz=c.pos.z+Math.cos(c.h)*camLa;
+    camTy=camTy===null||Math.abs(camTy-c.pos.y)>6?c.pos.y:lerp(camTy,c.pos.y,Math.min(1,dt*5));ty=camTy+(c.kind==='bus'?2.6:c.k.moto?1.5:1.7);
+    dist=(c.kind==='bus'?13:c.k.moto?6.5:8)+sp*.05;
+    if(now-lastCamInput>1.3&&sp>1.5){camYaw+=angDiff(camYaw,c.h)*Math.min(1,dt*(1.7+sp*.05));camPitch=lerp(camPitch,.2,Math.min(1,dt*1.5))}}
+  else{camTy=null;tx=player.pos.x;ty=player.pos.y+1.55;tz=player.pos.z;dist=inside?3.4:5.2}
   if(!started){camYaw+=dt*.08;dist=9}
   camDist=lerp(camDist,dist,Math.min(1,dt*3));const cp=Math.cos(camPitch),sp=Math.sin(camPitch),dx=-Math.sin(camYaw)*cp,dy=sp,dz=-Math.cos(camYaw)*cp;let d=camDist;
   for(let s=.5;s<=camDist;s+=.3)if(solidAt(tx+dx*s,ty+dy*s,tz+dz*s)){d=Math.max(.6,s-.4);break}
-  curD=d<curD?d:lerp(curD,d,Math.min(1,dt*4));const cx=tx+dx*curD,cz=tz+dz*curD;let cy=Math.max(ty+dy*curD,groundY(cx,cz,ty)+.35);if(inside)cy=Math.min(cy,player.pos.y+2.5);
+  curD=d<curD?d:lerp(curD,d,Math.min(1,dt*4));
+  for(let i=0;i<8&&curD>.6;i++){const qx=tx+dx*curD,qy=ty+dy*curD,qz=tz+dz*curD;if(!solidAt(qx+dz*.4,qy,qz-dx*.4)&&!solidAt(qx-dz*.4,qy,qz+dx*.4)&&!solidAt(qx,qy+.3,qz))break;curD=Math.max(.6,curD-.45)}
+  const cx=tx+dx*curD,cz=tz+dz*curD;let cy=Math.max(ty+dy*curD,groundY(cx,cz,ty)+.35);if(inside)cy=Math.min(cy,player.pos.y+2.5);
   camPos.set(cx,cy,cz);lookNow.set(tx,ty+.15,tz);
   if(blendOut>0){blendOut=Math.max(0,blendOut-dt/.7);const e=blendOut*blendOut*(3-2*blendOut);camPos.lerp(camFrom,e);lookNow.lerp(lookFrom,e)}
   camera.position.copy(camPos);if(shake>0){shake-=dt;camera.position.x+=(Math.random()-.5)*shake;camera.position.y+=(Math.random()-.5)*shake}camera.lookAt(lookNow.x,lookNow.y,lookNow.z)}
@@ -2735,7 +2773,7 @@ const SIGCYC=30;
 function sigOf(ax,t){const p=((t%SIGCYC)+SIGCYC)%SIGCYC,a=(ax==='ns'||ax==='NS')?p:(p+15)%SIGCYC;return a<11?'g':a<14?'y':'r'}
 function walkOf(ax,t){const p=((t%SIGCYC)+SIGCYC)%SIGCYC,a=(ax==='ns'||ax==='NS')?p:(p+15)%SIGCYC;return a<7.5?'walk':a<11?'flash':'stop'}
 function yLeft(ax,t){const p=((t%SIGCYC)+SIGCYC)%SIGCYC,a=(ax==='ns'||ax==='NS')?p:(p+15)%SIGCYC;return a>=11&&a<14?14-a:0}
-function yellowGo(ax,s,v,vEff,box){return (s+box)/Math.max(1,vEff)<yLeft(ax,tlT)+.8||s<v*v/(2*7)}
+function yellowGo(ax,s,v,vEff,box){return (s+box)/Math.max(1,vEff)<yLeft(ax,tlT)-.15||s<v*v/(2*7)}
 const TF={n:0,xp:new Set(),stats:{respawn:0,rejected:0}};
 // ---------- lanes, junctions, signals ----------
 const TGR=(TER.GRIDS||[]).map(G=>({xs:G.xs,zs:G.zs,y:G.y,x0:G.xs[0]-8,x1:G.xs[G.xs.length-1]+8,z0:G.zs[0]-8,z1:G.zs[G.zs.length-1]+8}));
@@ -2974,10 +3012,12 @@ document.addEventListener('pointerlockchange',()=>{lockT=now;if(document.pointer
 function joyMove(e){const r=joyEl.getBoundingClientRect(),R=r.width/2;let x=(e.clientX-r.left-R)/R,y=(e.clientY-r.top-R)/R;const m=Math.hypot(x,y);if(m>1){x/=m;y/=m}joy={x,y:-y,on:true};$('knob').style.transform=`translate(${x*R*.6}px,${y*R*.6}px)`}
 joyEl.addEventListener('pointerdown',e=>{e.preventDefault();Sound.resume();joyId=e.pointerId;try{joyEl.setPointerCapture(e.pointerId)}catch(err){}joyMove(e)});
 document.querySelectorAll('.btn').forEach(b=>{const a=b.dataset.a;
-  b.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();Sound.resume();if(Story.cine&&(a==='act'||a==='jump')){Story.next();return}
+  b.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();Sound.resume();try{b.setPointerCapture(e.pointerId)}catch(_){}if(Story.cine&&(a==='act'||a==='jump')){Story.next();return}
     if(a==='run'){player.runLock=!player.runLock;b.classList.toggle('on',player.runLock);return}if(a==='radio'){radioNext();return}if(a==='job'){jobKey();return}if(a==='horn'){Sound.horn(true);worldEvent(player.pos.x,player.pos.z,16,'horn')}
     btn[a]=true;b.classList.add('on');if(a==='jump'||a==='act')press(a)});
-  const up=()=>{if(a==='run')return;if(a==='horn')Sound.horn(false);btn[a]=false;b.classList.remove('on')};b.addEventListener('pointerup',up);b.addEventListener('pointercancel',up);b.addEventListener('pointerleave',up)});
+  const up=()=>{if(a==='run')return;if(a==='horn')Sound.horn(false);btn[a]=false;b.classList.remove('on')};b.addEventListener('pointerup',up);b.addEventListener('pointercancel',up);b.addEventListener('lostpointercapture',up);b.addEventListener('pointerleave',()=>{if(a!=='gas'&&a!=='brake')up()})});
+{const releaseAll=()=>{for(const k in btn)btn[k]=false;for(const k in keys)keys[k]=false;document.querySelectorAll('#touch .btn.on').forEach(b=>{if(b.dataset.a!=='run')b.classList.remove('on')});joyId=null;joy={x:0,y:0,on:false};$('knob').style.transform='';Sound.horn(false)};
+ addEventListener('blur',releaseAll);document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseAll()})}
 $('skip').addEventListener('click',()=>{if(Dir.on){Dir.skipTap();return}if(Story.lines){Story.li=Story.lines.length;Story.next()}});
 function showTouch(){$('touch').classList.remove('hide');document.body.classList.add('touch')}
 function setTouchMode(){$('touch').classList.toggle('car',!!player.car)}
@@ -3585,7 +3625,7 @@ function frame(t){requestAnimationFrame(frame);const dt=Math.min(.05,(t-last)/10
     const prev=tod;tod=(tod+dt/40)%24;if(tod<prev)day++;if(prev<6&&tod>=6&&started)payIncome();if(prev<9&&tod>=9&&started)payDay();TER.stream(player.car?player.car.pos.x:player.pos.x,player.car?player.car.pos.z:player.pos.z);Wildlife.update(dt);Weather.update(dt,dt/40);Wind.update(dt);updateStreetLights(dt);updateRain(dt);
     if(started&&!player.dead&&!Story.cine&&!busy){autoT-=dt;if(saveSoon){saveSoon-=dt;if(saveSoon<=0){saveSoon=0;saveGame()}}if(autoT<=0){autoT=30;saveGame()}}}
   for(const k in edge)edge[k]=false;
-  chunkT-=dt;if(chunkT<=0){chunkT=.25;updateChunks();for(const c of cars)c.g.visible=!inside&&Math.abs(c.pos.x-camera.position.x)+Math.abs(c.pos.z-camera.position.z)<VIEW*1.2}
+  chunkT-=dt;if(chunkT<=0){chunkT=.25;updateChunks();for(const c of cars){const md=Math.abs(c.pos.x-camera.position.x)+Math.abs(c.pos.z-camera.position.z);c.g.visible=!inside&&md<VIEW*1.2;const nw=md<95;if(c.wl!==nw){c.wl=nw;for(const w of c.wheels)w.visible=nw}}}
   updateCam(dt);camOverride(dt);updateWP();TER.sigTick(now);if(started){Nav.update(dt);updateChevrons()}updateSky(tod);Sound.update(dt);renderer.render(scene,camera);if(started){drawRadar();hud(dt)}}
 requestAnimationFrame(frame);
 }
